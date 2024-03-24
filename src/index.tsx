@@ -11,7 +11,8 @@ import {
   SidebarNavigation,
   staticClasses,
   TextField,
-  DialogCheckbox 
+  DialogCheckbox,
+  Router
 } from "decky-frontend-lib";
 import { VFC, Fragment, useRef, useState, useEffect } from "react";
 import { PyInterop } from "./PyInterop";
@@ -22,11 +23,23 @@ import { useSetting } from "./utils/hooks/useSetting";
 
 const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
   const [text, setText] = useState("");
+  const [authCode, setAuthCode] = useState("");
   const [screenshots, setScreenshots] = useState<string[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [waitingForAuth, setWaitingForAuth] = useState<boolean>(false)
+  const [loggedIn, setLoggedIn] = useState<boolean>(false)
 
   const postStatus = async () => {
-    await PyInterop.post_status_with_media(text, selectedFiles);
+    setLoggedIn((await PyInterop.is_logged_in()).result as boolean)
+    if (loggedIn) {
+      await PyInterop.post_status_with_media(text, selectedFiles);
+    } else {
+      const authUrl = (await PyInterop.get_auth_url()).result as string;
+      PyInterop.toast("Opening URL", authUrl)
+      Navigation.NavigateToExternalWeb(authUrl)
+      setWaitingForAuth(true)
+      await PyInterop.toast("Failed to post", "Please login")
+    }
   };
 
   async function fetchScreenshots(): Promise<void> {
@@ -58,7 +71,7 @@ const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
         <PanelSectionRow key={index}>
           <DialogCheckbox label={file} onChange={() => handleCheckboxChange(file) }/>
         </PanelSectionRow>
-      );
+      ));
     } else {
       return ( 
         <PanelSectionRow key={0}>
@@ -69,11 +82,33 @@ const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
     }
   };
 
+  const submitAuth = () => {
+    PyInterop.save_authentication(authCode)
+    setWaitingForAuth(false)
+  }
+
+
+  const renderAuthorization = () => {
+    if (waitingForAuth) {
+      return ( <PanelSectionRow>
+      <TextField
+        label="Paste your authorization code:"
+        value={authCode}
+        onChange={(e) => setAuthCode(e.target.value)}
+      />
+      <ButtonItem layout="below" onClick={submitAuth}>
+          Authenticate
+      </ButtonItem>
+    </PanelSectionRow>
+    )}
+  }
+
   return (
     <>
       <div className="bash-shortcuts-scope">
         <PanelSection>
           <PanelSectionRow>
+            {renderAuthorization()}
             <TextField
               label="Enter your status text"
               value={text}

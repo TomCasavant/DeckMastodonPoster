@@ -17,7 +17,9 @@ class Plugin:
 
     pluginSettingsDir = os.environ["DECKY_PLUGIN_SETTINGS_DIR"]
     settingsManager = SettingsManager(name='mastodon-settings', settings_directory=pluginSettingsDir)
-    client_cred_path = os.path.join(pluginSettingsDir, 'pytooter_clientcred.secret')
+    client_cred_path = os.path.join(pluginSettingsDir, 'mastodon_clientcred.secret')
+    user_cred_path = os.path.join(pluginSettingsDir, 'mastodon_usercred.secret')
+    
 
     async def getSetting(self, key, defaultVal):
         return self.settingsManager.getSetting(key, defaultVal)
@@ -25,13 +27,24 @@ class Plugin:
     async def setSetting(self, key, newVal):
         return self.settingsManager.setSetting(key, newVal)
 
-    async def post_status_with_media(self, text, media_ids):
-        """Posts a status with uploaded media"""
-        instance = self.settingsManager.getSetting('instanceDomain', None)
-        username = self.settingsManager.getSetting('mastodon_username', None)
-        password = self.settingsManager.getSetting('mastodon_password', None)
-        
-        #TODO: Report Errors to user if settings are incorrect
+    async def is_logged_in(self):
+        decky_plugin.logger.info("Verifying login information")
+        if not os.path.exists(self.client_cred_path) or not os.path.exists(self.user_cred_path):
+            decky_plugin.logger.info("Unable to find paths")
+            return False
+        try:
+            mastodon = Mastodon(access_token=self.user_cred_path)
+            # Attempt to validate the credentials
+            mastodon.account_verify_credentials()
+            decky_plugin.logger.info("Successfully validated creds")
+            return True
+        except Exception as e:
+            decky_plugin.logger.error(f"Error verifying login information: {e}")
+            return False
+
+
+    def login_to_mastodon(self, instance, email, password):
+        decky_plugin.logger.info("Attempting to login")
         if not os.path.exists(self.client_cred_path):
             decky_plugin.logger.info("Path doesn't exist")
             decky_plugin.logger.info(Mastodon.create_app(
@@ -44,10 +57,76 @@ class Plugin:
         mastodon = Mastodon(client_id=self.client_cred_path)
         decky_plugin.logger.info("Created client")
         mastodon.log_in(
-            username,
-            password
+            email,
+            password,
+            to_file=self.user_cred_path
         )
+        return mastodon
+
+    async def get_auth_url(self):
+        instance = self.settingsManager.getSetting('instanceDomain', None)
+        email = self.settingsManager.getSetting('mastodon_email', None)
+        password = self.settingsManager.getSetting('mastodon_password', None)
+        if not os.path.exists(self.client_cred_path):
+            decky_plugin.logger.info("Path doesn't exist")
+            Mastodon.create_app(
+                'MastoDecky',
+                api_base_url=f'https://{instance}',
+                to_file=self.client_cred_path,
+                redirect_uris=["urn:ietf:wg:oauth:2.0:oob"]
+            )
+            decky_plugin.logger.info("Registered App")
+
+        mastodon = Mastodon(self.client_cred_path)
+        redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'  # Use 'urn:ietf:wg:oauth:2.0:oob' for out-of-band authentication
+        auth_url = mastodon.auth_request_url(redirect_uris=redirect_uri)
+        return auth_url
+
+    async def save_authentication(self, auth_code):
+        try:
+            mastodon = Mastodon(self.client_cred_path)
+            redirect_uri="urn:ietf:wg:oauth:2.0:oob"
+            mastodon.log_in(code=auth_code, to_file=self.user_cred_path)
+        except Exception as e:
+            decky_plugin.logger.info(f"Failed to save auth {e}")
+
+    async def post_status_with_media(self, text, media_ids):
+        """Posts a status with uploaded media"""
+        decky_plugin.logger.info("Attempting to post status update")
+        instance = self.settingsManager.getSetting('instanceDomain', None)
+        email = self.settingsManager.getSetting('mastodon_email', None)
+        password = self.settingsManager.getSetting('mastodon_password', None)
+        mastodon = None
+        #decky_plugin.logger.info(Mastodon(email, access_token=self.user_cred_path))
+        decky_plugin.logger.info("Retrieved settings")
+        #if not Mastodon(email, access_token=self.user_cred_path):
+        #    decky_plugin.logger.info("User is not logged in!")
+        #    mastodon = await self.login_to_mastodon(instance, email, password)
+        #else:
+        #    decky_plugin.logger.info("User is logged in, creating mastodon instance")
+        #    mastodon = Mastodon(access_token = self.user_cred_path)
+        if not os.path.exists(self.client_cred_path):
+            decky_plugin.logger.info("Path doesn't exist")
+            Mastodon.create_app(
+                'MastoDecky',
+                api_base_url=f'https://{instance}',
+                to_file=self.client_cred_path,
+                scopes=["read", "write"],
+                redirect_uris=["urn:ietf:wg:oauth:2.0:oob"]
+            )
+            decky_plugin.logger.info("Registered App")
+       
+        mastodon = Mastodon(client_id=self.client_cred_path)
         decky_plugin.logger.info("Logged in!")
+        try:
+            mastodon.log_in(
+                email,
+                password,
+                scopes=["read", "write"],
+                redirect_uri="urn:ietf:wg:oauth:2.0:oob"
+            )
+        except Exception as e:
+            decky_plugin.logger.info(f"{e}")
 
         uploaded_media_ids = []
         for media_path in media_ids:

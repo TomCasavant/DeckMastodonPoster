@@ -85,4 +85,17 @@ export class PyInterop {
     const res = await this.serverAPI.callPluginMethod<{ directory: string, count: number, offset: number }, string[]>("get_recent_photos", { directory, count, offset });
     return res 
   }
+
+  static async is_logged_in(): Promise<ServerResponse<boolean>> {
+    const res = await this.serverAPI.callPluginMethod<{}, boolean>("is_logged_in", {})
+    return res
+  }
+
+  static async get_auth_url(): Promise<ServerResponse<string>> {
+    return await this.serverAPI.callPluginMethod<{}, string>('get_auth_url', {})
+  }
+
+  static async save_authentication(auth_code: string): Promise<ServerResponse<void>> {
+    return await this.serverAPI.callPluginMethod<{auth_code: string}, void>("save_authentication", {auth_code});
+  }
 }
